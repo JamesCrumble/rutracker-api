@@ -1,0 +1,16 @@
+version: '3'
+
+services:
+  rutracker-api:
+    container_name: rutracker-api
+    build:
+      context: .
+    image: rutracker-api
+    env_file: '.env'
+    environment:
+      RA_DEBUG: False
+      RA_AUTORELOAD: False
+    volumes:
+      - /opt/downloaded_torrents:/python-api/downloaded_torrents
+    ports:
+      - 4100:4000
