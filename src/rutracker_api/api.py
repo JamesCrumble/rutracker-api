@@ -4,18 +4,28 @@ import httpx
 from pathlib import Path
 from bs4.element import Tag
 from http import HTTPStatus
+from base64 import b64encode
 from bs4 import BeautifulSoup
 from typing import AsyncGenerator
-from fastapi.responses import HTMLResponse
 from contextlib import asynccontextmanager
 
-from .schemas import RutrackerTableRow, SearchResult
+from .schemas import RutrackerTableRow, SearchResult, ContentView
 from .exceptions import RutrackerRequestError, RutrackerApiError, RutrackerSearchSessionExpired
 from ..settings import settings
 
 TOTAL_RESULT_PATTERN: re.Pattern = re.compile(r'Результатов поиска: (\d{,3})')
 SEARCH_ID_PATTERN: re.Pattern = re.compile(r'PG_BASE_URL: \'tracker\.php\?search_id=(.+)\'')
 ROWS_PER_PAGE_PATTERN: re.Pattern = re.compile(r'PG_PER_PAGE: \'?(\d{,3})\'?')
+
+
+def content_view_exclude_useless_text_tags(content_view_body: BeautifulSoup) -> None:
+    if clear_tag := content_view_body.find(class_='clear'):
+        clear_tag.extract()
+    if info_footer := content_view_body.find_all(class_='post-align'):
+        info_footer[-1].extract()
+
+    for wrap_ in content_view_body.find_all(class_='sp-wrap'):
+        wrap_.extract()
 
 
 def parse_search_result(parser: BeautifulSoup) -> list[RutrackerTableRow]:
@@ -104,19 +114,50 @@ class RutrackerApi:
         async with httpx.AsyncClient(proxy=settings.PROXY_DSN, cookies=cookies) as client:
             yield client
 
-    # TODO: parse raw html to something if needed...
     @classmethod
-    async def content_view(cls, content_id: str) -> HTMLResponse:
+    async def content_view(cls, content_id: str) -> ContentView:
         async with cls._async_proxy_client() as client:
             response = await client.get(cls.__content_view_endpoint__, params={'t': content_id})
             cls._validate_response(response)
 
-            return HTMLResponse(response.content)
+            parser = BeautifulSoup(response.content, 'html.parser')
+            content_view_body = parser.find(class_='post_body')
+
+            content_view_body_text: str = ''
+            content_view_title: str | None = None
+            content_view_image_bs64: str | None = None
+            content_view_image_link: str | None = None
+
+            possibly_content_view_title = content_view_body.next.next
+            if type(possibly_content_view_title) is Tag:
+                if 'post-align' in possibly_content_view_title.attrs.get('class', []):
+                    possibly_content_view_title = possibly_content_view_title.next
+
+                if possibly_content_view_title.attrs.get('style', '').startswith('font-size'):
+                    content_view_title = possibly_content_view_title.extract().text
+
+            content_view_image_link_tag = content_view_body.find(class_='postImg').extract()
+            content_view_image_link = content_view_image_link_tag.attrs.get('src', content_view_image_link_tag.attrs.get('title'))
+
+            content_view_exclude_useless_text_tags(content_view_body)
+            content_view_body_text = content_view_body.text.strip()
+
+            if content_view_image_link is not None:
+                content_view_image_response = await client.get(content_view_image_link)
+                if content_view_image_response.status_code == HTTPStatus.OK:
+                    content_view_image_bs64 = b64encode(content_view_image_response.content)
+
+            return ContentView(
+                title=content_view_title,
+                body=content_view_body_text,
+                image_bs64=content_view_image_bs64,
+            )
 
     @classmethod
     async def download_torrent(cls, content_id: str) -> None:
         fp = Path(settings.DOWNLOAD_FOLDER_PATH) / f'{content_id}.torrent'
-        if fp.exists():
+        added_to_downloading_fp = Path(settings.DOWNLOAD_FOLDER_PATH) / f'{content_id}.torrent.added'
+        if fp.exists() or added_to_downloading_fp.exists():
             return
 
         handle = open(fp, 'wb')

@@ -54,3 +54,9 @@ class SearchResult(BaseModel):
             total_founded_rows=0,
             search_id=None,
         )
+
+
+class ContentView(BaseModel):
+    title: str | None = None  # cannot parse if None
+    body: str = ''
+    image_bs64: str | None = None
