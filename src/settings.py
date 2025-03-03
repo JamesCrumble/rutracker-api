@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     DOWNLOAD_FOLDER_PATH: str = 'downloaded_torrents'
 
     RUTRACKER_SESSION_COOKIE: str
-    RUTRACKER_BASE_URL: str = 'https://rutracker.org/forum'
+    RUTRACKER_BASE_URL: str = 'https://rutracker.net/forum'
 
     def on_startup(self) -> None:
         Path(self.DOWNLOAD_FOLDER_PATH).mkdir(exist_ok=True)
