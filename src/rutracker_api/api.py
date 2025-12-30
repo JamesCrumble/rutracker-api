@@ -13,6 +13,7 @@ from .schemas import RutrackerTableRow, SearchResult, ContentView
 from .exceptions import RutrackerRequestError, RutrackerApiError, RutrackerSearchSessionExpired
 from ..settings import settings
 
+DEFAULT_ROWS_PER_PAGE: int = 50
 TOTAL_RESULT_PATTERN: re.Pattern = re.compile(r'Результатов поиска: (\d{,3})')
 SEARCH_ID_PATTERN: re.Pattern = re.compile(r'PG_BASE_URL: \'tracker\.php\?search_id=(.+)\'')
 ROWS_PER_PAGE_PATTERN: re.Pattern = re.compile(r'PG_PER_PAGE: \'?(\d{,3})\'?')
@@ -57,7 +58,7 @@ def parse_search_result(parser: BeautifulSoup) -> list[RutrackerTableRow]:
     return result
 
 
-def parse_search_page(response_content: str) -> SearchResult:
+def parse_search_page(response_content: str, rows_per_page: int = DEFAULT_ROWS_PER_PAGE) -> SearchResult:
     parser = BeautifulSoup(response_content, 'html.parser')
 
     result = SearchResult.empty()
@@ -73,7 +74,7 @@ def parse_search_page(response_content: str) -> SearchResult:
         result.search_id = search_id_match.group(1)
 
     total_result = int(total_result_match.group(1))
-    div, mod = divmod(total_result, len(result.rows))
+    div, mod = divmod(total_result, rows_per_page)
 
     result.total_pages = div if mod == 0 else div + 1
     result.total_founded_rows = total_result
@@ -83,7 +84,7 @@ def parse_search_page(response_content: str) -> SearchResult:
 
 class RutrackerApi:
 
-    __rows_per_page__: int = 50  # 50 by default and updates with each search request
+    __rows_per_page__: int = DEFAULT_ROWS_PER_PAGE  # 50 by default and updates with each search request
 
     __login_endpoint__: str = settings.RUTRACKER_BASE_URL + '/login.php'
     __search_endpoint__: str = settings.RUTRACKER_BASE_URL + '/tracker.php'
@@ -174,8 +175,7 @@ class RutrackerApi:
 
     @classmethod
     async def pagination(cls, search_id: str, page: int) -> SearchResult:
-        if page <= 0:
-            raise RutrackerRequestError('Page number should be greater than 0.')
+        assert page > 0, 'Page number should be greater than 0.'
 
         async with cls._async_proxy_client() as client:
             response = await client.get(
@@ -186,7 +186,7 @@ class RutrackerApi:
             response_content = response.text
             cls._update_rows_per_page(response_content)
 
-            result = parse_search_page(response_content)
+            result = parse_search_page(response_content, cls.__rows_per_page__)
             if result.rows:
                 result.page = page
 
@@ -201,7 +201,7 @@ class RutrackerApi:
             response_content = response.text
             cls._update_rows_per_page(response_content)
 
-            result = parse_search_page(response_content)
+            result = parse_search_page(response_content, cls.__rows_per_page__)
             if result.rows:
                 result.page = 1
 
@@ -221,7 +221,7 @@ if __name__ == '__main__':
     )
 
     async def main() -> None:
-        search_query = 'Чужой: Ромул'
+        search_query = 'Оно'
         print('#'*40, f' SEARCH "{search_query}" ', '#'*40, '\n\n')
         result = await RutrackerApi.search(search_query)
         print(f'Result: {result.page=} {result.total_pages=} {result.search_id=}')
